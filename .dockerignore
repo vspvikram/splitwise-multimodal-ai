@@ -1,0 +1,18 @@
+# Ignore virtual environment
+.venv
+venv
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore IDE and editor folders
+.vscode/
+.idea/
+
+# Ignore other miscellaneous files
+.DS_Store
+.env
+splitwise.log
