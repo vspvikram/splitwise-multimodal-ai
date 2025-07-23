@@ -1,0 +1,16 @@
+fastapi>=0.116.1
+uvicorn[standard]>=0.35.0
+python-multipart>=0.0.20
+pydantic>=2.11.7
+pydantic-settings>=2.10.1
+pydantic-ai-slim[openai]>=0.4.3
+python-jose[cryptography]>=3.5.0
+passlib[bcrypt]==1.7.4
+python-dotenv>=1.1.1
+loguru>=0.7.3
+pillow>=11.3.0
+nest-asyncio>=1.6.0
+aiofiles==23.2.1
+streamlit>=1.28.0
+pandas>=1.5.0
+openai>=1.0.0
