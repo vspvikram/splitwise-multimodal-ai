@@ -6,7 +6,7 @@ from pydantic import BaseModel
 @dataclass
 class DependencySplitwiseDeps:
     """Dependencies for splitwise structured data extractor and bill splitter."""
-    image_bytes: bytes
+    image_bytes_list: List[bytes]  # Changed from single bytes to list
     user_description: str
     feedback: Optional[str] = None
     previous_output: Optional[str] = None

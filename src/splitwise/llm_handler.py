@@ -1,5 +1,5 @@
 """LLM API integration for bill processing"""
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from pydantic_ai import Agent, RunContext, BinaryContent
 from pydantic_ai.messages import ModelMessage
 from src.splitwise.llm_factory import get_model, LLMProviderType
@@ -21,30 +21,35 @@ bill_parser_agent = Agent(
     deps_type=DependencySplitwiseDeps
 )
 
+# Update bill parser prompt for multiple images
 bill_parser_prompt = """
 You are a receipt parser that extracts basic information from bills.
 
+IMPORTANT: You may receive multiple images of the same bill/receipt (different pages, angles, or sections). 
+Analyze ALL images together to get the complete picture.
+
 Your task:
 1. Extract people from the user description and assign unique abbreviations (V, A, etc.)
-2. Read every line item on the receipt image, capture name and exact price
-3. Extract ALL fees/charges/taxes/discounts from the receipt as raw items - don't categorize them yet
+2. Read EVERY line item across ALL receipt images, capture name and exact price
+3. Extract ALL fees/charges/taxes/discounts from ALL images as raw items - don't categorize them yet
 4. Map each item to people who shared it based on the description
 
 For fees/charges/discounts:
-- Extract the exact name as shown on receipt
+- Extract the exact name as shown on receipt(s)
 - Extract the exact amount (use negative values for discounts/credits)
 - Put ALL fees in the "tax_items" category for now (categorization happens later)
+- If you see the same fee in multiple images, only include it ONCE
 
-Note: **Only add fees and items that are explicitly mentioned in the receipt.**
+Note: **Only add fees and items that are explicitly mentioned in the receipt(s).**
 
 Return structured data with:
 - persons: dict mapping abbreviations to full names
-- items: list of dicts with "name" and "price" keys
+- items: list of dicts with "name" and "price" keys (NO DUPLICATES across images)
 - fees: dict with "Tax", "Delivery Fee", "Tip" all set to 0.0
 - item_shares: dict mapping item names to lists of person abbreviations
 - raw_fees: FeeCategorization object with all fees in tax_items, delivery_items and tip_items empty
 
-Focus on accuracy of extraction, not categorization.
+Focus on accuracy of extraction, not categorization. Combine information from all images intelligently.
 """
 
 @bill_parser_agent.instructions
@@ -102,19 +107,29 @@ FEES TO CATEGORIZE (exactly {len(fees_list)} fees):
 You must categorize exactly these {len(fees_list)} fees and no others.
 """
 
-async def call_llm_api(image_bytes: bytes, user_description: str, 
+async def call_llm_api(image_bytes_list: Union[List[bytes], bytes], user_description: str, 
                       feedback: Optional[str] = None, 
                       previous_output: Optional[str] = None) -> Tuple[SplitwiseFormattedOutput, str]:
     """
     Call LLM API using two-agent approach: bill parser + fee categorizer
     
+    Args:
+        image_bytes_list: List of image bytes OR single image bytes (for backward compatibility)
+        user_description: Description of who shared what
+        feedback: Optional feedback for regeneration
+        previous_output: Previous output for comparison
+    
     Returns:
         Tuple[SplitwiseFormattedOutput, str]: (structured_object, formatted_string)
     """
     
+    # Handle backward compatibility - convert single bytes to list
+    if isinstance(image_bytes_list, bytes):
+        image_bytes_list = [image_bytes_list]
+    
     # Create dependency object for bill parser
     deps = DependencySplitwiseDeps(
-        image_bytes=image_bytes,
+        image_bytes_list=image_bytes_list,
         user_description=user_description,
         feedback=feedback,
         previous_output=previous_output
@@ -122,18 +137,22 @@ async def call_llm_api(image_bytes: bytes, user_description: str,
     
     try:
         # Build the user prompt with feedback if provided
-        user_prompt = f"Process this receipt image using the split description: {user_description}"
+        num_images = len(image_bytes_list)
+        user_prompt = f"Process these {num_images} receipt image(s) using the split description: {user_description}"
         
         if feedback and previous_output:
             user_prompt += f"\n\nPrevious output had issues: {feedback}\nPrevious output was: {previous_output}\nPlease improve based on this feedback."
         
-        # Step 1: Extract basic bill information
-        print("Step 1: Extracting bill information...")
+        # Step 1: Extract basic bill information from all images
+        print(f"Step 1: Extracting bill information from {num_images} image(s)...")
+        
+        # Create message list with user prompt and all images
+        messages = [user_prompt]
+        for i, image_bytes in enumerate(image_bytes_list):
+            messages.append(BinaryContent(data=image_bytes, media_type="image/png"))
+        
         bill_result = await bill_parser_agent.run(
-            [
-                user_prompt,
-                BinaryContent(data=image_bytes, media_type="image/png")
-            ],
+            messages,
             deps=deps,
         )
         
@@ -162,10 +181,8 @@ async def call_llm_api(image_bytes: bytes, user_description: str,
                 print(f"WARNING: Fee count mismatch! Input: {len(all_raw_fees)}, Output: {len(categorized_fees)}")
                 print(f"Input fees: {[f.name for f in all_raw_fees]}")
                 print(f"Output fees: {[f.name for f in categorized_fees]}")
-                # Fall back to original categorization
                 print("Falling back to original categorization...")
             else:
-                # Update the bill data with properly categorized fees
                 bill_data.raw_fees = categorization_result.output
                 print("Fee categorization successful!")
         
@@ -193,7 +210,6 @@ Tip: {calculated_fees['Tip']:.2f}
     except Exception as e:
         print(f"Error in two-agent processing: {e}")
         error_msg = f"Error: Failed to process bill data - {str(e)}"
-        # Return empty object and error message
         empty_object = SplitwiseFormattedOutput(
             persons={}, items=[], fees={}, item_shares={}, 
             raw_fees=FeeCategorization(tax_items=[], delivery_items=[], tip_items=[])
@@ -201,7 +217,7 @@ Tip: {calculated_fees['Tip']:.2f}
         return empty_object, error_msg
 
 # Keep the existing sync wrapper
-def call_llm_api_sync(image_bytes: bytes, user_description: str, 
+def call_llm_api_sync(image_bytes_list: Union[List[bytes], bytes], user_description: str, 
                      feedback: Optional[str] = None, 
                      previous_output: Optional[str] = None) -> Tuple[SplitwiseFormattedOutput, str]:
     """
@@ -219,11 +235,11 @@ def call_llm_api_sync(image_bytes: bytes, user_description: str,
             # We're in an event loop, use asyncio.create_task
             import nest_asyncio
             nest_asyncio.apply()
-            return asyncio.run(call_llm_api(image_bytes, user_description, feedback, previous_output))
+            return asyncio.run(call_llm_api(image_bytes_list, user_description, feedback, previous_output))
         except RuntimeError:
             # No event loop running, we can use asyncio.run directly
             import asyncio
-            return asyncio.run(call_llm_api(image_bytes, user_description, feedback, previous_output))
+            return asyncio.run(call_llm_api(image_bytes_list, user_description, feedback, previous_output))
     except Exception as e:
         print(f"Error in sync wrapper: {e}")
         error_msg = f"Error: Failed to process bill data - {str(e)}"
