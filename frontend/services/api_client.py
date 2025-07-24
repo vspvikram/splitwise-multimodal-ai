@@ -15,7 +15,8 @@ class APIClient:
     def health_check(self) -> bool:
         """Check if backend API is healthy"""
         try:
-            response = self.session.get(f"{self.base_url}/bills/health", timeout=5)
+            # Fixed: Correct API path
+            response = self.session.get(f"{self.base_url}/api/v1/bills/health", timeout=5)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Health check failed: {e}")
@@ -53,8 +54,9 @@ class APIClient:
                 data['previous_output'] = previous_output
             
             # Make request
+            # Fixed: Correct API path
             response = self.session.post(
-                f"{self.base_url}/bills/process",
+                f"{self.base_url}/api/v1/bills/process",
                 files=files,
                 data=data,
                 timeout=60  # Longer timeout for LLM processing
@@ -78,8 +80,9 @@ class APIClient:
             Tuple of (success, response_data)
         """
         try:
+            # Fixed: Correct API path
             response = self.session.post(
-                f"{self.base_url}/bills/calculate-split",
+                f"{self.base_url}/api/v1/bills/calculate-split",
                 json={"formatted_output": formatted_output},
                 timeout=30
             )

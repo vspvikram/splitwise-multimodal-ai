@@ -5,6 +5,9 @@ from loguru import logger
 
 from services.api_client import get_api_client
 from components.upload import render_upload_section
+import dotenv
+
+dotenv.load_dotenv()
 
 # Configure logging
 logger.add("frontend.log", rotation="1 MB", level="DEBUG")
