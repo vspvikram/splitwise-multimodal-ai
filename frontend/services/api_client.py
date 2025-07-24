@@ -3,11 +3,13 @@ import streamlit as st
 from typing import List, Optional, Dict, Any, Tuple
 from io import BytesIO
 from loguru import logger
+import os
 
 
 class APIClient:
-    def __init__(self, base_url: str = "http://localhost:8000/api/v1"):
-        self.base_url = base_url
+    def __init__(self):
+        # Use environment variable for backend URL, fallback to localhost
+        self.base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
         self.session = requests.Session()
     
     def health_check(self) -> bool:
